@@ -2,13 +2,9 @@ import { useEffect, useState } from "react";
 import {
   Web3AuthMPCCoreKit,
   WEB3AUTH_NETWORK,
-  TssShareType,
   parseToken,
-  generateFactorKey,
   COREKIT_STATUS,
-  keyToMnemonic,
   makeEthereumSigner,
-  mnemonicToKey,
   FactorKeyTypeShareDescription,
 } from "@web3auth/mpc-core-kit";
 import { BN } from "bn.js";
@@ -40,11 +36,24 @@ const evmChainConfig = {
   logo: "https://cryptologos.cc/logos/ethereum-eth-logo.png",
 };
 
+// Create separate storage objects for each instance
+const evmStorage = {
+  getItem: (key: string) => localStorage.getItem(`evm_${key}`),
+  setItem: (key: string, value: string) => localStorage.setItem(`evm_${key}`, value),
+  removeItem: (key: string) => localStorage.removeItem(`evm_${key}`),
+};
+
+const solanaStorage = {
+  getItem: (key: string) => localStorage.getItem(`solana_${key}`),
+  setItem: (key: string, value: string) => localStorage.setItem(`solana_${key}`, value),
+  removeItem: (key: string) => localStorage.removeItem(`solana_${key}`),
+};
+
 // Create both instances
 const coreKitInstance = new Web3AuthMPCCoreKit({
   web3AuthClientId,
   web3AuthNetwork: WEB3AUTH_NETWORK.MAINNET,
-  storage: window.localStorage,
+  storage: evmStorage,
   manualSync: true,
   tssLib: evmTssLib,
 });
@@ -52,7 +61,7 @@ const coreKitInstance = new Web3AuthMPCCoreKit({
 const solanaCoreKitInstance = new Web3AuthMPCCoreKit({
   web3AuthClientId,
   web3AuthNetwork: WEB3AUTH_NETWORK.MAINNET,
-  storage: window.localStorage,
+  storage: solanaStorage,
   manualSync: true,
   tssLib: solanaTssLib,
 });
@@ -73,7 +82,6 @@ function App() {
   const [solanaCoreKitStatus, setSolanaCoreKitStatus] = useState<COREKIT_STATUS>(COREKIT_STATUS.NOT_INITIALIZED);
   const [backupEvmFactorKey, setBackupEvmFactorKey] = useState<string>("");
   const [backupSolanaFactorKey, setBackupSolanaFactorKey] = useState<string>("");
-  const [mnemonicFactor, setMnemonicFactor] = useState<string>("");
   const [recoveryPassphrase, setRecoveryPassphrase] = useState<string>("");
 
   const app = initializeApp(firebaseConfig);
@@ -112,16 +120,13 @@ function App() {
 
   const login = async () => {
     try {
-      console.log('1.login', coreKitInstance.status, solanaCoreKitInstance.status);
       if (!coreKitInstance || !solanaCoreKitInstance) {
         throw new Error("Instances not initialized");
       }
-      console.log('2.login', coreKitInstance.status, solanaCoreKitInstance.status);
 
       const loginRes = await signInWithGoogle();
       const idToken = await loginRes.user.getIdToken(true);
       const parsedToken = parseToken(idToken);
-      console.log('3.login', coreKitInstance.status, solanaCoreKitInstance.status);
 
       // Login params for both chains
       const loginParams = {
@@ -129,16 +134,20 @@ function App() {
         verifierId: parsedToken.sub,
         idToken,
       };
-     
 
       // Login to EVM first
       await coreKitInstance.loginWithJWT(loginParams);
-      console.log('4.login', coreKitInstance.status, solanaCoreKitInstance.status);
+      
       if (coreKitInstance.status === COREKIT_STATUS.LOGGED_IN) {
         await coreKitInstance.commitChanges();
         // Setup EVM provider after successful login
-        evmProvider = new EthereumSigningProvider({ config: { chainConfig: evmChainConfig } });
-        evmProvider.setupProvider(makeEthereumSigner(coreKitInstance));
+        try {
+          evmProvider = new EthereumSigningProvider({ config: { chainConfig: evmChainConfig } });
+          evmProvider.setupProvider(makeEthereumSigner(coreKitInstance));
+          console.log('EVM Provider set up successfully');
+        } catch (providerError) {
+          console.error('Error setting up EVM provider:', providerError);
+        }
       }
       setCoreKitStatus(coreKitInstance.status);
 
@@ -152,7 +161,6 @@ function App() {
 
       // Login to Solana
       await solanaCoreKitInstance.loginWithJWT(solanaLoginParams);
-      console.log('5.login', coreKitInstance.status, solanaCoreKitInstance.status);
 
       if (solanaCoreKitInstance.status === COREKIT_STATUS.LOGGED_IN) {
         await solanaCoreKitInstance.commitChanges();
@@ -161,7 +169,6 @@ function App() {
 
       if (coreKitInstance.status === COREKIT_STATUS.REQUIRED_SHARE || 
           solanaCoreKitInstance.status === COREKIT_STATUS.REQUIRED_SHARE) {
-    
           uiConsole(
             "Required more shares, please enter your backup/ device factor key, or reset account [unrecoverable once reset, please use it with caution]"
           );
@@ -201,48 +208,6 @@ function App() {
       }
     } catch (error) {
       uiConsole("Error during recovery:", error);
-    }
-  };
-
-  const enableMFA = async () => {
-    if (!coreKitInstance || !solanaCoreKitInstance) {
-      throw new Error("Instances not initialized");
-    }
-    try {
-      // Generate a single factor key for both chains
-      const factorKey = generateFactorKey();
-      const factorKeyHex = factorKey.private.toString("hex");
-      const factorKeyMnemonic = await keyToMnemonic(factorKeyHex);
-
-      // Create device shares for both chains
-      await Promise.all([
-        coreKitInstance.enableMFA({
-          factorKey: factorKey.private,
-          shareDescription: FactorKeyTypeShareDescription.DeviceShare
-        }),
-        solanaCoreKitInstance.enableMFA({
-          factorKey: factorKey.private,
-          shareDescription: FactorKeyTypeShareDescription.DeviceShare
-        })
-      ]);
-          
-      // Commit changes if logged in
-      if (coreKitInstance.status === COREKIT_STATUS.LOGGED_IN) {
-        await coreKitInstance.commitChanges();
-      }
-      if (solanaCoreKitInstance.status === COREKIT_STATUS.LOGGED_IN) {
-        await solanaCoreKitInstance.commitChanges();
-      }
-
-      uiConsole({
-        message: "MFA enabled for both EVM and Solana chains.",
-        deviceFactor: "Device factor stored in local storage (for automatic login)",
-        recoveryFactor: "Recovery factor (save this mnemonic securely):",
-        backupFactorKey: factorKeyMnemonic,
-        note: "You can now: 1) Log in automatically using the device factor, or 2) Recover using the mnemonic if needed"
-      });
-    } catch (e) {
-      uiConsole("Error enabling MFA:", e);
     }
   };
 
@@ -292,21 +257,6 @@ function App() {
     }
   };
 
-
-  const MnemonicToFactorKeyHex = async (mnemonic: string) => {
-    if (!coreKitInstance) {
-      throw new Error("coreKitInstance is not set");
-    }
-    try {
-      const factorKey = await mnemonicToKey(mnemonic);
-      setBackupEvmFactorKey(factorKey);
-      setBackupSolanaFactorKey(factorKey);
-      return factorKey;
-    } catch (error) {
-      uiConsole(error);
-    }
-  };
-
   const getUserInfo = async () => {
     const user = coreKitInstance.getUserInfo();
     uiConsole(user);
@@ -338,8 +288,18 @@ function App() {
       return;
     }
     try {
-      // Get EVM address
-      const evmAddress = await RPC.getAccounts(evmProvider);
+      // Get EVM address - check if provider is properly set up
+      let evmAddress = [];
+      if (evmProvider) {
+        console.log('EVM Provider exists, trying to get accounts...');
+        evmAddress = await RPC.getAccounts(evmProvider);
+        console.log('EVM Address from provider:', evmAddress);
+      } else {
+        console.log('EVM Provider not set up');
+        // Log key details for debugging
+        const keyDetails = coreKitInstance.getKeyDetails();
+        console.log('EVM Key details:', keyDetails);
+      }
       
       // Get Solana address
       const solanaRPC = new SolanaRPC(solanaCoreKitInstance);
@@ -347,9 +307,12 @@ function App() {
       
       uiConsole({
         evmAddress,
-        solanaAddress
+        solanaAddress,
+        evmProviderExists: !!evmProvider,
+        evmStatus: coreKitInstance.status
       });
     } catch (error) {
+      console.error('Error getting accounts:', error);
       uiConsole("Error getting accounts:", error);
     }
   };
@@ -371,27 +334,7 @@ function App() {
     }
   }
 
-  const getBalance = async () => {
-    if (!coreKitInstance) {
-      uiConsole("Provider not initialized yet");
-      return;
-    }
 
-    const solanaRPC = new SolanaRPC(coreKitInstance);
-    const balance = await solanaRPC.getBalance();
-    uiConsole(balance);
-  };
-
-  const requestFaucet = async () => {
-    if (!coreKitInstance) {
-      uiConsole("Provider not initialized yet");
-      return;
-    }
-
-    const solanaRPC = new SolanaRPC(coreKitInstance);
-    const hash = await solanaRPC.requestFaucet();
-    uiConsole(`Hash: https://explorer.solana.com/tx/${hash}?cluster=devnet`);
-  };
 
   const processRequest = (method: () => void) => {
     try {
@@ -400,32 +343,6 @@ function App() {
       uiConsole(error);
     }
   }
-
-  const signMessage = async () => {
-    if (!coreKitInstance) {
-      uiConsole("Provider not initialized yet");
-      return;
-    }
-
-    uiConsole("Signing Message...");
-
-    const solanaRPC = new SolanaRPC(coreKitInstance);
-    const signedMessage = await solanaRPC.signMessage();
-    uiConsole(signedMessage);
-  };
-
-  const sendTransaction = async () => {
-    if (!coreKitInstance) {
-      uiConsole("Provider not initialized yet");
-      return;
-    }
-
-    uiConsole("Sending Transaction...");
-
-    const solanaRPC = new SolanaRPC(coreKitInstance);
-    const hash = await solanaRPC.sendTransaction();
-    uiConsole(`Hash: https://explorer.solana.com/tx/${hash}?cluster=devnet`);
-  };
 
   const criticalResetAccount = async (): Promise<void> => {
     if (!coreKitInstance || !solanaCoreKitInstance) {
@@ -477,6 +394,21 @@ function App() {
           solanaCoreKitInstance.logout()
         ]);
 
+        // Clear backup factor keys and recovery passphrase
+        setBackupEvmFactorKey("");
+        setBackupSolanaFactorKey("");
+        setRecoveryPassphrase("");
+
+        // Reinitialize instances to ensure they're properly reset
+        await Promise.all([
+          coreKitInstance.init(),
+          solanaCoreKitInstance.init()
+        ]);
+
+        // Update statuses after reinitialization
+        setCoreKitStatus(coreKitInstance.status);
+        setSolanaCoreKitStatus(solanaCoreKitInstance.status);
+
         uiConsole("Both EVM and Solana accounts have been reset successfully. You can now create new wallets by clicking Login.");
       } catch (error) {
         uiConsole("Error resetting accounts:", error);
@@ -485,6 +417,21 @@ function App() {
         sessionStorage.clear();
         setCoreKitStatus(COREKIT_STATUS.NOT_INITIALIZED);
         setSolanaCoreKitStatus(COREKIT_STATUS.NOT_INITIALIZED);
+        setBackupEvmFactorKey("");
+        setBackupSolanaFactorKey("");
+        setRecoveryPassphrase("");
+        
+        // Try to reinitialize instances even on error
+        try {
+          await Promise.all([
+            coreKitInstance.init(),
+            solanaCoreKitInstance.init()
+          ]);
+          setCoreKitStatus(coreKitInstance.status);
+          setSolanaCoreKitStatus(solanaCoreKitInstance.status);
+        } catch (initError) {
+          console.error("Error reinitializing instances:", initError);
+        }
       }
     }
   };
@@ -500,9 +447,17 @@ function App() {
           ]);
         }
 
-        // Clear all storage
+        // Clear all storage - both regular and prefixed
         localStorage.clear();
         sessionStorage.clear();
+        
+        // Also clear any remaining prefixed keys
+        const allKeys = Object.keys(localStorage);
+        allKeys.forEach(key => {
+          if (key.startsWith('evm_') || key.startsWith('solana_')) {
+            localStorage.removeItem(key);
+          }
+        });
         
         // Reset statuses
         setCoreKitStatus(COREKIT_STATUS.NOT_INITIALIZED);
@@ -534,8 +489,6 @@ function App() {
       const evmFactorKey = new BN(keccak256(ethers.toUtf8Bytes(`evm::${recoveryPassphrase}`)).slice(2), 'hex');
       const solFactorKey = new BN(keccak256(ethers.toUtf8Bytes(`solana::${recoveryPassphrase}`)).slice(2), 'hex');
 
-      console.log('Creating recovery factor with:', evmFactorKey.toString('hex'), solFactorKey.toString('hex'));
-  
       await Promise.all([
         coreKitInstance.enableMFA({
           factorKey: evmFactorKey,
@@ -547,7 +500,7 @@ function App() {
         })
       ]);
   
-      console.log('mfa enabled')
+      console.log('mfa enabled: device share stored in localStorage')
       if (coreKitInstance.status === COREKIT_STATUS.LOGGED_IN) {
         await coreKitInstance.commitChanges();
       }
@@ -578,9 +531,7 @@ function App() {
       const evmFactorKey = new BN(keccak256(ethers.toUtf8Bytes(`evm::${recoveryPassphrase}`)).slice(2), 'hex');
       const solFactorKey = new BN(keccak256(ethers.toUtf8Bytes(`solana::${recoveryPassphrase}`)).slice(2), 'hex');
 
-      console.log('Creating recovery factor with:', evmFactorKey.toString('hex'), solFactorKey.toString('hex'));
-  
-      console.log("🚀 ~ recoverWithPassphrase ~ factorKey:", evmFactorKey.toString('hex'), solFactorKey.toString('hex'))
+
       if (coreKitInstance.status === COREKIT_STATUS.REQUIRED_SHARE) {
         await coreKitInstance.inputFactorKey(evmFactorKey);
       }
@@ -607,8 +558,6 @@ function App() {
       uiConsole("Error recovering with passphrase:", error);
     }
   };
-  
-
 
   function uiConsole(...args: any[]): void {
     const el = document.querySelector("#console>p");
@@ -629,21 +578,6 @@ function App() {
             </button>
           </div>
           <div>
-            <button onClick={() => processRequest(getBalance)} className="card">
-              Get EVM Balance
-            </button>
-          </div>
-          <div>
-            <button onClick={() => processRequest(signMessage)} className="card">
-              Sign EVM Message
-            </button>
-          </div>
-          <div>
-            <button onClick={() => processRequest(sendTransaction)} className="card">
-              Send EVM Transaction
-            </button>
-          </div>
-          <div>
             <button onClick={keyDetails} className="card">
               Get EVM Key Details
             </button>
@@ -657,11 +591,7 @@ function App() {
               Get Solana Address
             </button>
           </div>
-          <div>
-            <button onClick={() => processRequest(requestFaucet)} className="card">
-              Request Solana Faucet
-            </button>
-          </div>
+        
           <div>
             <button onClick={keyDetails} className="card">
               Get Solana Key Details
@@ -676,11 +606,7 @@ function App() {
               Log Out
             </button>
           </div>
-          <div>
-            <button onClick={() => processRequest(enableMFA)} className="card">
-              Enable MFA for Both Chains
-            </button>
-          </div>
+        
           <div>
             <h3>Recovery Passphrase (Works for Both Chains)</h3>
             <div>
@@ -740,14 +666,7 @@ function App() {
         </div>
         <div>
           <button onClick={() => getDeviceFactor()} className="card">
-            Get Device Factor
-          </button>
-        </div>
-        <div>
-          <label>Recover Using Mnemonic Factor Key:</label>
-          <input value={mnemonicFactor} onChange={(e) => setMnemonicFactor(e.target.value)}></input>
-          <button onClick={() => MnemonicToFactorKeyHex(mnemonicFactor)} className="card">
-            Get Recovery Factor Key using Mnemonic
+            Get Device Factor - Then click in the button below to input the factor key
           </button>
         </div>
         <div>
