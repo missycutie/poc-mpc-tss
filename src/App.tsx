@@ -20,9 +20,9 @@ import { CHAIN_NAMESPACES } from "@web3auth/base";
 import RPC from "./web3RPC";
 import * as ethers from "ethers";
 
-const web3AuthClientId = "BPi5PB_UiIZ-cPz1GtV5i1I2iOSOHuimiXBI0e-Oe_u6X3oVAbCiAZOTEBtTXw4tsluTITPqA8zMsfxIKMjiqNQ";
+const web3AuthClientId = "BGQMr4MM4Uvhiav3-4wv-67j28XvKFO6scW2P4ONVLf9SgdiCa6q5Rd29LkQ5S0b8uS3pGryf_nnGDeigAjA-RQ"
 
-const verifier = "w3a-firebase-demo";
+const verifier = "herond-wallet-dev";
 
 // Add EVM Chain Config
 const evmChainConfig = {
@@ -52,7 +52,7 @@ const solanaStorage = {
 // Create both instances
 const coreKitInstance = new Web3AuthMPCCoreKit({
   web3AuthClientId,
-  web3AuthNetwork: WEB3AUTH_NETWORK.MAINNET,
+  web3AuthNetwork: WEB3AUTH_NETWORK.DEVNET,
   storage: evmStorage,
   manualSync: true,
   tssLib: evmTssLib,
@@ -60,7 +60,7 @@ const coreKitInstance = new Web3AuthMPCCoreKit({
 
 const solanaCoreKitInstance = new Web3AuthMPCCoreKit({
   web3AuthClientId,
-  web3AuthNetwork: WEB3AUTH_NETWORK.MAINNET,
+  web3AuthNetwork: WEB3AUTH_NETWORK.DEVNET,
   storage: solanaStorage,
   manualSync: true,
   tssLib: solanaTssLib,
@@ -76,6 +76,35 @@ const firebaseConfig = {
   messagingSenderId: "461819774167",
   appId: "1:461819774167:web:e74addfb6cc88f3b5b9c92"
 };
+
+/**
+ * Fetches a prepare token from the wallet API using the provided access token.
+ * @param accessToken - The JWT access token to use for authentication
+ * @returns The response data from the API
+ * @throws Error if the request fails
+ */
+export async function fetchPrepareToken(accessToken: string): Promise<any> {
+  const response = await fetch('https://wallet-dev.herond.org/api/v1/wallet-accounts/prepare-token', {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'X-Nonce': 'abc-123',
+      'Host': 'accounts-dev.herond.org',
+    },
+  });
+
+  // Handle 204 No Content specifically
+  if (response.status === 204) {
+    console.log('Prepare token response: 204 No Content - No data returned');
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch prepare-token: ${response.status}`);
+  }
+
+  return response.json();
+}
 
 function App() {
   const [coreKitStatus, setCoreKitStatus] = useState<COREKIT_STATUS>(COREKIT_STATUS.NOT_INITIALIZED);
@@ -123,18 +152,66 @@ function App() {
       if (!coreKitInstance || !solanaCoreKitInstance) {
         throw new Error("Instances not initialized");
       }
+      console.log('2.login', coreKitInstance.status, solanaCoreKitInstance.status);
 
-      const loginRes = await signInWithGoogle();
-      const idToken = await loginRes.user.getIdToken(true);
+      const fetchAccessToken = async (code: string) => {
+        try {
+          const params = new URLSearchParams();
+          params.append('client_id', 'herond-browser');
+          params.append('client_secret', 'ZxQlDaRVCV3QAz06ZER2');
+          params.append('grant_type', 'refresh_token');
+          params.append('refresh_token', '7F5D0B51406100BF7BD50FBCEB6A053C0D6E3C9816504EB59E0C41417BBE6700-1');
+          params.append('scope', 'wallet');
+          const response = await fetch('https://accounts-dev.herond.org/oauth2/v4/token', {
+            method: 'POST',
+            headers: {
+              'Postman-Token': '47519b97-9a48-4a14-8859-592f44baf733',
+              'Host': 'accounts-dev.herond.org',
+              'Connection': 'keep-alive',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          body: params.toString(),
+          
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const data = await response.json();
+          return data;
+        } catch (error) {
+          console.error('Error fetching access token:', error);
+          throw error;
+        }
+      };
+      
+      const getAccessToken = fetchAccessToken();
+      const { access_token: accessToken } = await getAccessToken;
+      console.log("fetchAccessToken:", accessToken);
+      let prepareTokenData;
+      try {
+        prepareTokenData = await fetchPrepareToken(accessToken);
+        console.log("Prepare token response:", prepareTokenData);
+      } catch (error) {
+        console.error("Error fetching prepare token:", error);
+      }
+      
+      // Get idTokens for EVM and Solana from prepareTokenData
+      const evmTokenObj = prepareTokenData.find((item: any) => item.chainType === "EVM");
+      const solanaTokenObj = prepareTokenData.find((item: any) => item.chainType === "SOLANA");
+      const idToken = evmTokenObj?.idToken;
+      console.log("IdToken:", idToken);
       const parsedToken = parseToken(idToken);
-
+      
       // Login params for both chains
       const loginParams = {
         verifier,
         verifierId: parsedToken.sub,
         idToken,
       };
-
+      
+      console.log("verifiedId for evm: ", parsedToken.sub);
+     
       // Login to EVM first
       await coreKitInstance.loginWithJWT(loginParams);
       
@@ -152,12 +229,14 @@ function App() {
       setCoreKitStatus(coreKitInstance.status);
 
       // Get a fresh token for Solana
-      const freshIdToken = await loginRes.user.getIdToken(true);
+      const freshIdToken = solanaTokenObj?.idToken;
       const solanaLoginParams = {
         verifier,
         verifierId: parsedToken.sub,
         idToken: freshIdToken,
       };
+
+      console.log("verifiedId for solana : ", parsedToken.sub);
 
       // Login to Solana
       await solanaCoreKitInstance.loginWithJWT(solanaLoginParams);
@@ -173,6 +252,44 @@ function App() {
             "Required more shares, please enter your backup/ device factor key, or reset account [unrecoverable once reset, please use it with caution]"
           );
       }
+    // Create a method to create keyless account
+    const createKeylessAccount = async (evmIdToken: string, solIdToken: string, accessToken: string) => {
+      const requestBody = {
+        "accounts": [
+          {
+            "type": "EVM",
+            "idToken": evmIdToken
+          },
+          {
+            "type": "SOLANA",
+            "idToken": solIdToken
+          }
+        ]
+      }
+
+      const headers = {
+        "Content-Type": "application/json",
+        'Authorization': `Bearer ${accessToken}`,
+        'X-Nonce': 'abc-123',
+        'Host': 'wallet-dev.herond.org',
+      };
+
+      try {
+        const response = await fetch("https://wallet-dev.herond.org/api/v1/wallet-accounts", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody),
+        });
+        const data = await response.json();
+        console.log("Wallet accounts response:", data);
+        return data;
+      } catch (httpError) {
+        uiConsole("Error creating wallet accounts:", httpError);
+        throw httpError;
+      }
+    };
+    
+    createKeylessAccount(idToken, freshIdToken, accessToken);
     } catch (err) {
       uiConsole(err);
     }
