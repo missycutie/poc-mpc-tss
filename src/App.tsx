@@ -17,8 +17,9 @@ import SolanaRPC from "./solanaRPC";
 import { keccak256 } from "ethers";
 import { EthereumSigningProvider } from "@web3auth/ethereum-mpc-provider";
 import { CHAIN_NAMESPACES } from "@web3auth/base";
-import RPC from "./web3RPC";
+import ethersRPC from "./ethersRPC";
 import * as ethers from "ethers";
+import EthersRPC from "./ethersRPC";
 
 const web3AuthClientId = "BPi5PB_UiIZ-cPz1GtV5i1I2iOSOHuimiXBI0e-Oe_u6X3oVAbCiAZOTEBtTXw4tsluTITPqA8zMsfxIKMjiqNQ";
 
@@ -121,7 +122,12 @@ function App() {
   const login = async () => {
     try {
       if (!coreKitInstance || !solanaCoreKitInstance) {
-        throw new Error("Instances not initialized");
+        await Promise.all([
+          coreKitInstance.init(),
+          solanaCoreKitInstance.init()
+        ]);
+        setCoreKitStatus(coreKitInstance.status);
+        setSolanaCoreKitStatus(solanaCoreKitInstance.status);
       }
 
       const loginRes = await signInWithGoogle();
@@ -292,7 +298,7 @@ function App() {
       let evmAddress = [];
       if (evmProvider) {
         console.log('EVM Provider exists, trying to get accounts...');
-        evmAddress = await RPC.getAccounts(evmProvider);
+        evmAddress = await new EthersRPC(evmProvider).getAccounts();
         console.log('EVM Address from provider:', evmAddress);
       } else {
         console.log('EVM Provider not set up');
@@ -436,6 +442,17 @@ function App() {
     }
   };
 
+  const exportPrivateKey = async () => {
+    if (!coreKitInstance || !solanaCoreKitInstance) {
+      throw new Error("Instances not initialized");
+    }
+    const evmPrivateKey = await coreKitInstance._UNSAFE_exportTssKey();
+    const solanaPrivateKey = await solanaCoreKitInstance._UNSAFE_exportTssEd25519Seed();
+    uiConsole({
+      evmPrivateKey,
+      solanaPrivateKey
+    });
+  }
   const clearStorage = async () => {
     if (window.confirm("WARNING: This will clear all local storage data, including device shares. You will need to use recovery to log in again. Are you sure?")) {
       try {
@@ -559,6 +576,15 @@ function App() {
     }
   };
 
+  const signEvmMessage = async () => {
+    if (!evmProvider) {
+      await login();
+    }
+    const rpc = new EthersRPC(evmProvider)
+    const signature = await rpc.signMessage("Hello, world!")
+    uiConsole(signature);
+  };
+
   function uiConsole(...args: any[]): void {
     const el = document.querySelector("#console>p");
     if (el) {
@@ -637,6 +663,11 @@ function App() {
               [CRITICAL] Export Seed
             </button>
           </div>
+          <div>
+          <button onClick={signEvmMessage} className="card">
+            Sign EVM Message
+          </button>
+        </div>
         </div>
       </div>
     </>
@@ -680,6 +711,7 @@ function App() {
             [CRITICAL] Reset Account
           </button>
         </div>
+     
       </div>
     </>
   );

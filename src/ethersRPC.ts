@@ -2,94 +2,138 @@
 import type { IProvider } from "@web3auth/base";
 import { ethers } from "ethers";
 
-const getChainId = async (provider: IProvider): Promise<any> => {
-  try {
-    const ethersProvider = new ethers.BrowserProvider(provider);
-    // Get the connected Chain's ID
-    const networkDetails = await ethersProvider.getNetwork();
-    return networkDetails.chainId.toString();
-  } catch (error) {
-    return error;
+export default class EthersRPC {
+  private provider: IProvider;
+
+  constructor(provider: IProvider) {
+    this.provider = provider;
   }
-}
 
-const getAccounts = async (provider: IProvider): Promise<any> => {
-  try {
-    const ethersProvider = new ethers.BrowserProvider(provider);
-    const signer = await ethersProvider.getSigner();
-
-    // Get user's Ethereum public address
-    const address = signer.getAddress();
-
-    return await address;
-  } catch (error) {
-    return error;
+  async getChainId(): Promise<any> {
+    try {
+      // For ethers v5
+      // const ethersProvider = new ethers.providers.Web3Provider(this.provider);
+      const ethersProvider = new ethers.BrowserProvider(this.provider);
+      // Get the connected Chain's ID
+      const networkDetails = await ethersProvider.getNetwork();
+      return networkDetails.chainId.toString();
+    } catch (error) {
+      return error;
+    }
   }
-}
 
-const getBalance = async (provider: IProvider): Promise<string> => {
-  try {
-    const ethersProvider = new ethers.BrowserProvider(provider);
-    const signer = await ethersProvider.getSigner();
+  async getAccounts(): Promise<any> {
+    try {
+      // For ethers v5
+      // const ethersProvider = new ethers.providers.Web3Provider(this.provider);
+      const ethersProvider = new ethers.BrowserProvider(this.provider);
 
-    // Get user's Ethereum public address
-    const address = signer.getAddress();
+      // For ethers v5
+      // const signer = ethersProvider.getSigner();
+      const signer = await ethersProvider.getSigner();
 
-    // Get user's balance in ether
-    const balance = ethers.formatEther(
-      await ethersProvider.getBalance(address) // Balance is in wei
-    );
+      // Get user's Ethereum public address
+      const address = signer.getAddress();
 
-    return balance;
-  } catch (error) {
-    return error as string;
+      return await address;
+    } catch (error) {
+      return error;
+    }
   }
-}
 
-const sendTransaction = async (provider: IProvider): Promise<any> => {
-  try {
-    const ethersProvider = new ethers.BrowserProvider(provider);
-    const signer = await ethersProvider.getSigner();
+  async getBalance(): Promise<string> {
+    try {
+      // For ethers v5
+      // const ethersProvider = new ethers.providers.Web3Provider(this.provider);
+      const ethersProvider = new ethers.BrowserProvider(this.provider);
 
-    const destination = "0x40e1c367Eca34250cAF1bc8330E9EddfD403fC56";
+      // For ethers v5
+      // const signer = ethersProvider.getSigner();
+      const signer = await ethersProvider.getSigner();
 
-    const amount = ethers.parseEther("0.001");
+      // Get user's Ethereum public address
+      const address = signer.getAddress();
 
-    // Submit transaction to the blockchain
-    const tx = await signer.sendTransaction({
-      to: destination,
-      value: amount,
-      maxPriorityFeePerGas: "5000000000", // Max priority fee per gas
-      maxFeePerGas: "6000000000000", // Max fee per gas
-    });
+      // Get user's balance in ether
+      // For ethers v5
+      // const balance = ethers.utils.formatEther(
+      // await ethersProvider.getBalance(address) // Balance is in wei
+      // );
+      const balance = ethers.formatEther(
+        await ethersProvider.getBalance(address) // Balance is in wei
+      );
 
-    // Wait for transaction to be mined
-    const receipt = await tx.wait();
-
-    return receipt;
-  } catch (error) {
-    return error as string;
+      return balance;
+    } catch (error) {
+      return error as string;
+    }
   }
-}
 
-const signMessage = async (provider: IProvider): Promise<any> => {
-  try {
-    // For ethers v5
-    // const ethersProvider = new ethers.providers.Web3Provider(provider);
-    const ethersProvider = new ethers.BrowserProvider(provider);
+  async signTransaction(): Promise<any> {
+    try {
+      // For ethers v5
+      // const ethersProvider = new ethers.providers.Web3Provider(this.provider);
+      const ethersProvider = new ethers.BrowserProvider(this.provider);
 
-    // For ethers v5
-    // const signer = ethersProvider.getSigner();
-    const signer = await ethersProvider.getSigner();
-    const originalMessage = "YOUR_MESSAGE";
+      // For ethers v5
+      // const signer = ethersProvider.getSigner();
+      const signer = await ethersProvider.getSigner();
 
-    // Sign the message
-    const signedMessage = await signer.signMessage(originalMessage);
+      console.log('signer address', await signer.getAddress())
+      const destination = "0x6156a7d2E27C5da6a467D01fD3D53e06382B5e81"; //trinh address for test
 
-    return signedMessage;
-  } catch (error) {
-    return error as string;
+      // Convert 1 ether to wei
+      // For ethers v5
+      // const amount = ethers.utils.parseEther("0.001");
+      const amount = ethers.parseEther("0.000000000000000001");
+
+      console.log('amount', amount)
+      // Submit transaction to the blockchain
+      const signTx = await signer.signTransaction({
+        to: destination,
+        value: amount,
+        maxPriorityFeePerGas: "5000000000", // Max priority fee per gas
+        maxFeePerGas: "6000000000000", // Max fee per gas
+      });
+
+      console.log('signTx', signTx)
+
+      return signTx;
+    } catch (error) {
+      console.log('error in signTransaction', error)
+      return error as string;
+    }
   }
-}
 
-export default {getChainId, getAccounts, getBalance, sendTransaction, signMessage};
+  async signMessage(message: string) {
+    try {
+      // For ethers v5
+      // const ethersProvider = new ethers.providers.Web3Provider(this.provider);
+      const ethersProvider = new ethers.BrowserProvider(this.provider);
+
+      const accounts = await this.provider.request({
+        method: 'eth_requestAccounts',
+        params: []
+      })
+    
+      console.log('0. accounts', accounts)
+      console.log('1. ethersProvider', ethersProvider)
+      // For ethers v5
+      // const signer = ethersProvider.getSigner();
+      const signer = await ethersProvider.getSigner();
+      console.log('2. signer', signer)
+
+      const address = await signer.getAddress()
+      console.log('address', address)
+      // Sign the message
+      const signedMessage = await signer.signMessage(message);
+
+      console.log('3. signedMessage', signedMessage)
+      return signedMessage;
+    } catch (error) {
+      console.log('error in signMessage', error)
+      return error as string;
+    }
+  }
+
+}

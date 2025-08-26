@@ -53,7 +53,7 @@ const signMessage = async (provider: IProvider): Promise<string> => {
     // Get user's Ethereum public address
     const fromAddress = (await web3.eth.getAccounts())[0];
 
-    const originalMessage = "YOUR_MESSAGE";
+    const originalMessage = "hello world";
 
     // Sign the message
     const signedMessage = await web3.eth.personal.sign(
